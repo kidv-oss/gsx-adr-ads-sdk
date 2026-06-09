@@ -94,16 +94,17 @@ class AdmRewardInterstitialAd internal constructor() : RewardedInterstitialAdEve
      * Bật preload. [index] = -1 -> xoay vòng unit id kế tiếp; >=0 -> chọn cụ thể id thứ [index]
      * (0-based) trong [AdmConfigAdId.listRewardInterstitialAdUnitID]. Đang preload rồi -> bỏ qua. Lỗi -> [onError].
      */
-    fun load(index: Int = -1) {
+    fun load(index: Int = -1, customIds: List<String>? = null) {
         preloadError()?.let { fail(it); return }
         if (preloadUnitId != null) { log("đang preload ${tag()}, bỏ qua"); return }
 
-        val u = units()
+        // customIds != null -> xoay vòng list đó thay cho AdmConfigAdId.listRewardInterstitialAdUnitID.
+        val u = customIds?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() } ?: units()
         val idx = if (index < 0) nextIndex(u.size) else index
         val unit = u.getOrNull(idx) ?: run { fail(AdmErrorType.AD_ID_IS_NOT_EXIST); return }
         preloadUnitId = unit
         currentIndex = idx
-        log("load (preload) ${tag()}")
+        log("load (preload) ${tag()}${if (customIds != null) " [custom]" else ""}")
 
         val config = PreloadConfiguration(AdRequest.Builder(unit).build(), bufferSize)
         RewardedInterstitialAdPreloader.start(unit, config, object : PreloadCallback {
@@ -130,9 +131,9 @@ class AdmRewardInterstitialAd internal constructor() : RewardedInterstitialAdEve
      * Show dùng activity foreground tự lấy ([AdCore.currentActivity]). Không có -> [onError].
      * [index]: chỉ dùng khi CHƯA preload -> load id đó rồi show (xem [show]).
      */
-    fun show(index: Int = -1) {
+    fun show(index: Int = -1, customIds: List<String>? = null) {
         val act = AdCore.currentActivity ?: run { fail(AdmErrorType.ACTIVITY_IS_NOT_AVAILABLE); return }
-        show(act, index)
+        show(act, index, customIds)
     }
 
     /**
@@ -140,7 +141,7 @@ class AdmRewardInterstitialAd internal constructor() : RewardedInterstitialAdEve
      * + dialog chờ buffer. [index] = -1 xoay vòng, >=0 chọn id cụ thể (CHỈ khi chưa có buffer; đã
      * preload id khác thì show id đang có). Đang có 1 show chờ -> bỏ qua (double-tap). Lỗi -> [onError].
      */
-    fun show(activity: Activity, index: Int = -1) {
+    fun show(activity: Activity, index: Int = -1, customIds: List<String>? = null) {
         if (activity.isDead()) { fail(AdmErrorType.ACTIVITY_IS_NOT_AVAILABLE); return }
         premiumBlock()?.let { fail(it); return }
         if (pendingActivity != null) { log("đang chờ show, bỏ qua (double-tap)"); return }
@@ -150,7 +151,7 @@ class AdmRewardInterstitialAd internal constructor() : RewardedInterstitialAdEve
         if (id != null && RewardedInterstitialAdPreloader.isAdAvailable(id)) { showWithDelay(activity, id); return }
 
         preloadError()?.let { fail(it); return }
-        if (preloadUnitId == null) load(index)
+        if (preloadUnitId == null) load(index, customIds)   // chưa preload -> load+show id từ customIds
         waitForAd(activity)
     }
 

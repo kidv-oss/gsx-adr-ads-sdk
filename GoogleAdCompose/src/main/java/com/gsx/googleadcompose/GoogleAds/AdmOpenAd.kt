@@ -65,6 +65,7 @@ class AdmOpenAd internal constructor() : AppOpenAdEventCallback {
     // ---- Chờ preload để show (load+show) ----
     private var wantShow = false
     private var wantIndex = -1
+    private var wantCustomIds: List<String>? = null
 
     // ---- Splash: callback đóng/lỗi/timeout (1-shot) ----
     private var splashClosed: (() -> Unit)? = null
@@ -109,13 +110,18 @@ class AdmOpenAd internal constructor() : AppOpenAdEventCallback {
      * Cold-start splash: load + show. [onClosed] fire 1 lần khi **ad đóng / lỗi / quá [timeoutMs]**
      * (preload chưa kịp) -> splash gọi tiếp vào main. [index] chọn id.
      */
-    fun showFromSplash(index: Int = -1, timeoutMs: Long = 8_000L, onClosed: () -> Unit) {
+    fun showFromSplash(
+        index: Int = -1,
+        customIds: List<String>? = null,
+        timeoutMs: Long = 8_000L,
+        onClosed: () -> Unit,
+    ) {
         if (!GlobalVariables.canShowOpenAd) { log("canShowOpenAd=false -> skip splash open"); onClosed(); return }
         splashClosed = onClosed
         val t = Runnable { log("splash open timeout ${timeoutMs}ms"); consumeSplash() }
         splashTimeout = t
         mainHandler.postDelayed(t, timeoutMs)
-        show(index)
+        show(index, customIds = customIds)
     }
 
     /** Fire callback splash 1-shot (đóng/lỗi/timeout) + dọn. Đảm bảo chạy trên main (navigate an toàn). */
@@ -145,24 +151,25 @@ class AdmOpenAd internal constructor() : AppOpenAdEventCallback {
     // ========================= Nội bộ ===========================
 
     /** Preload buffer cho id theo [index] (-1 xoay vòng). canShowOpenAd=false / đang preload -> bỏ. */
-    private fun load(index: Int = -1) {
+    private fun load(index: Int = -1, customIds: List<String>? = null) {
         if (!GlobalVariables.canShowOpenAd) { log("canShowOpenAd=false -> không load"); return }
         preloadError()?.let { fail(it); return }
         if (preloadUnitId != null) { log("đang preload ${tag()}, bỏ qua"); return }
 
-        val u = units()
+        // customIds != null -> xoay vòng list đó thay cho AdmConfigAdId.listOpenAdUnitID.
+        val u = customIds?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() } ?: units()
         val idx = if (index < 0) nextIndex(u.size) else index
         val unit = u.getOrNull(idx) ?: run { fail(AdmErrorType.AD_ID_IS_NOT_EXIST); return }
         preloadUnitId = unit
         currentIndex = idx
-        log("load (preload) ${tag()}")
+        log("load (preload) ${tag()}${if (customIds != null) " [custom]" else ""}")
 
         val config = PreloadConfiguration(AdRequest.Builder(unit).build(), bufferSize)
         AppOpenAdPreloader.start(unit, config, object : PreloadCallback {
             override fun onAdPreloaded(preloadId: String, responseInfo: ResponseInfo) {
                 loadedAtMs = System.currentTimeMillis()
                 log("preloaded ${tag()}"); onAvailable()
-                mainHandler.post { if (wantShow) { wantShow = false; show(wantIndex) } }
+                mainHandler.post { if (wantShow) { wantShow = false; show(wantIndex, customIds = wantCustomIds) } }
             }
             override fun onAdsExhausted(preloadId: String) {
                 log("exhausted ${tag()}"); onExhausted()
@@ -180,7 +187,7 @@ class AdmOpenAd internal constructor() : AppOpenAdEventCallback {
      * (splash); false -> chỉ preload, KHÔNG show (resume: bỏ lần này, foreground sau mới show).
      * Hết hạn (>4h) -> reload. Premium / popup khác đang hiện -> bỏ.
      */
-    private fun show(index: Int = -1, waitForLoad: Boolean = true) {
+    private fun show(index: Int = -1, waitForLoad: Boolean = true, customIds: List<String>? = null) {
         val act = AdCore.currentActivity ?: run { fail(AdmErrorType.ACTIVITY_IS_NOT_AVAILABLE); return }
         if (act.isDead()) { fail(AdmErrorType.ACTIVITY_IS_NOT_AVAILABLE); return }
         premiumBlock()?.let { fail(it); return }
@@ -191,22 +198,23 @@ class AdmOpenAd internal constructor() : AppOpenAdEventCallback {
             markPopup(); pollAndShow(act, id); return
         }
         // Chưa sẵn / hết hạn -> load lại.
-        if (id != null && isExpired()) reloadFresh(index) else if (preloadUnitId == null) load(index)
+        if (id != null && isExpired()) reloadFresh(index, customIds) else if (preloadUnitId == null) load(index, customIds)
         if (waitForLoad) {
             wantShow = true
             wantIndex = index
+            wantCustomIds = customIds
             log("chưa sẵn -> load rồi show ${tag()}")
         } else {
             log("chưa sẵn -> chỉ preload, bỏ show lần này ${tag()}")
         }
     }
 
-    /** Bỏ ad cũ + preload lại id theo [index] (không gỡ observer như [destroy]). */
-    private fun reloadFresh(index: Int) {
+    /** Bỏ ad cũ + preload lại id theo [index]/[customIds] (không gỡ observer như [destroy]). */
+    private fun reloadFresh(index: Int, customIds: List<String>? = null) {
         preloadUnitId?.let { AppOpenAdPreloader.destroy(it) }
         preloadUnitId = null
         loadedAtMs = 0L
-        load(index)
+        load(index, customIds)
     }
 
     /** Ad đã preload quá 4h -> coi như hết hạn (Google: app-open valid 4 giờ). */

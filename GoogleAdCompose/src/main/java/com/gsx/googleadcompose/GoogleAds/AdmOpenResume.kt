@@ -27,15 +27,6 @@ object AdmOpenResume {
         ad = AdmOpenAd().apply(configure).also { it.resumeAd(index) }
     }
 
-    /**
-     * Cold-start splash: load + show. [onClosed] fire khi ad đóng / lỗi / quá [timeoutMs] -> vào main.
-     * Chưa [start] -> [onClosed] ngay. [index] chọn id.
-     */
-    fun showFromSplash(index: Int = -1, timeoutMs: Long = 8_000L, onClosed: () -> Unit) {
-        val a = ad ?: run { onClosed(); return }
-        a.showFromSplash(index, timeoutMs, onClosed)
-    }
-
     /** Tắt + dọn (hiếm dùng). */
     fun stop() {
         ad?.destroy()

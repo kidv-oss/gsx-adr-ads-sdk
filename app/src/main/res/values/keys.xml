@@ -48,5 +48,8 @@
         <item>ca-app-pub-3940256099942544/9257395921</item>
         <item>ca-app-pub-3940256099942544/9257395921</item>
     </string-array>
+    <string-array name="app_open_ad_units_custom" translatable="false">
+        <item>ca-app-pub-3940256099942544/9257395921</item>
+    </string-array>
 
 </resources>

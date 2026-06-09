@@ -119,17 +119,18 @@ class AdmBannerAd internal constructor() : BannerAdEventCallback {
      * Load 1 banner (suspend). Trả [BannerAd] hoặc null (kèm [onError]). [index] = -1 xoay vòng,
      * >=0 chọn id cụ thể trong [AdmConfigAdId.listBannerAdUnitID].
      */
-    suspend fun loadAd(activity: Activity, index: Int = -1): BannerAd? {
-        loadError()?.let { fail(it); return null }
+    suspend fun loadAd(activity: Activity, index: Int = -1, customIds: List<String>? = null): BannerAd? {
+        envBlock()?.let { fail(it); return null }
 
-        val u = units()
+        val u = customIds?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() } ?: units()
+        if (u.isEmpty()) { fail(AdmErrorType.LIST_AD_ID_IS_EMPTY); return null }
         val idx = if (index < 0) nextIndex(u.size) else index
         val unit = u.getOrNull(idx) ?: run { fail(AdmErrorType.AD_ID_IS_NOT_EXIST); return null }
         unitId = unit
         currentIndex = idx
 
         val adSize = adSize(activity)
-        log("load ${tag()} size=$adSize collapsible=$collapsible")
+        log("load ${tag()} size=$adSize collapsible=$collapsible${if (customIds != null) " [custom]" else ""}")
         val builder = BannerAdRequest.Builder(unit, adSize)
         if (collapsible != AdmBannerCollapsible.NONE) {
             val extras = Bundle().apply { putString("collapsible", collapsible.value) }
@@ -210,12 +211,12 @@ class AdmBannerAd internal constructor() : BannerAdEventCallback {
         }
     }
 
-    private fun loadError(): AdmErrorType? {
+    /** Guard môi trường (premium/UMP/network) — KHÔNG gồm check list rỗng. */
+    private fun envBlock(): AdmErrorType? {
         premiumBlock()?.let { return it }
         if (!AdCore.isMobileAdsReady) return AdmErrorType.UMP_IS_NOT_ACTIVE
         val ctx = AdCore.appContext
         if (ctx != null && !NetworkHelper.isOnline(ctx)) return AdmErrorType.NETWORK_IS_NOT_AVAILABLE
-        if (units().isEmpty()) return AdmErrorType.LIST_AD_ID_IS_EMPTY
         return null
     }
 
@@ -256,6 +257,7 @@ class AdmBannerAd internal constructor() : BannerAdEventCallback {
 fun AdmBanner(
     modifier: Modifier = Modifier,
     index: Int = -1,
+    customIds: List<String>? = null,
     configure: AdmBannerAd.() -> Unit = {},
 ) {
     val controller = remember { AdmBannerAd() }
@@ -266,25 +268,48 @@ fun AdmBanner(
     val isPreview = LocalInspectionMode.current
     val activity = remember(context) { context.findActivity() ?: AdCore.currentActivity }
     var ad by remember { mutableStateOf<BannerAd?>(null) }
+    var failed by remember { mutableStateOf(false) }
+    val blocked = remember { controller.isBlockedByPremium() }
 
     // Key theo size/collapsible -> đổi cấu hình tự reload, call-site KHỎI cần key() bọc ngoài.
-    LaunchedEffect(activity, index, controller.size, controller.collapsible) {
-        if (isPreview) return@LaunchedEffect
-        if (activity == null) { controller.onError(AdmErrorType.ACTIVITY_IS_NOT_AVAILABLE); return@LaunchedEffect }
+    // customIds != null -> xoay vòng list id đó thay cho AdmConfigAdId.listBannerAdUnitID.
+    LaunchedEffect(activity, index, customIds, controller.size, controller.collapsible) {
+        if (isPreview || blocked) return@LaunchedEffect
+        if (activity == null) {
+            controller.onError(AdmErrorType.ACTIVITY_IS_NOT_AVAILABLE); failed = true; return@LaunchedEffect
+        }
         controller.destroy()   // dọn ad cũ trước khi load cỡ mới
         ad = null
+        failed = false
         // loadAd tự guard premium/UMP/offline/units -> fail() bắn onError (parity với inter).
-        ad = controller.loadAd(activity, index)
+        val result = controller.loadAd(activity, index, customIds)
+        ad = result
+        failed = result == null
     }
 
     DisposableEffect(Unit) { onDispose { controller.destroy() } }
 
     val loaded = ad
-    if (loaded != null && activity != null) {
-        Box(modifier = modifier.fillMaxWidth().wrapContentHeight(), contentAlignment = Alignment.Center) {
-            AndroidView(factory = { loaded.getView(activity) })
-        }
+    when {
+        blocked -> Unit
+        loaded != null && activity != null ->
+            Box(modifier.fillMaxWidth().wrapContentHeight(), contentAlignment = Alignment.Center) {
+                AndroidView(factory = { loaded.getView(activity) })
+            }
+        failed -> Unit                                                  // lỗi -> rỗng (đã báo onError)
+        else -> AdShimmerBanner(modifier, heightDp = controller.size.placeholderHeightDp())  // đang load
     }
+}
+
+/** Chiều cao xấp xỉ (dp) cho skeleton shimmer theo cỡ banner. */
+private fun AdmBannerSize.placeholderHeightDp(): Int = when (this) {
+    AdmBannerSize.ADAPTIVE -> 60
+    AdmBannerSize.ADAPTIVE_LARGE -> 90
+    AdmBannerSize.BANNER -> 50
+    AdmBannerSize.FULL_BANNER -> 60
+    AdmBannerSize.LARGE_BANNER -> 100
+    AdmBannerSize.LEADERBOARD -> 90
+    AdmBannerSize.MEDIUM_RECTANGLE -> 250
 }
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {

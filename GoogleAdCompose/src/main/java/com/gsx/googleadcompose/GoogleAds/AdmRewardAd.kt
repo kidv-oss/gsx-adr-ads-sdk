@@ -98,16 +98,17 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
      * Bật preload. [index] = -1 -> xoay vòng unit id kế tiếp; >=0 -> chọn cụ thể id thứ [index]
      * (0-based) trong [AdmConfigAdId.listRewardAdUnitID]. Đang preload rồi -> bỏ qua. Lỗi -> [onError].
      */
-    fun load(index: Int = -1) {
+    fun load(index: Int = -1, customIds: List<String>? = null) {
         preloadError()?.let { fail(it); return }
         if (preloadUnitId != null) { log("đang preload ${tag()}, bỏ qua"); return }
 
-        val u = units()
+        // customIds != null -> xoay vòng list đó thay cho AdmConfigAdId.listRewardAdUnitID.
+        val u = customIds?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() } ?: units()
         val idx = if (index < 0) nextIndex(u.size) else index
         val unit = u.getOrNull(idx) ?: run { fail(AdmErrorType.AD_ID_IS_NOT_EXIST); return }
         preloadUnitId = unit
         currentIndex = idx
-        log("load (preload) ${tag()}")
+        log("load (preload) ${tag()}${if (customIds != null) " [custom]" else ""}")
 
         val config = PreloadConfiguration(AdRequest.Builder(unit).build(), bufferSize)
         RewardedAdPreloader.start(unit, config, object : PreloadCallback {
@@ -134,9 +135,9 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
      * Show dùng activity foreground tự lấy ([AdCore.currentActivity]). Không có -> [onError].
      * [index]: chỉ dùng khi CHƯA preload -> load id đó rồi show (xem [show]).
      */
-    fun show(index: Int = -1) {
+    fun show(index: Int = -1, customIds: List<String>? = null) {
         val act = AdCore.currentActivity ?: run { fail(AdmErrorType.ACTIVITY_IS_NOT_AVAILABLE); return }
-        show(act, index)
+        show(act, index, customIds)
     }
 
     /**
@@ -144,7 +145,7 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
      * [index] = -1 xoay vòng, >=0 chọn id cụ thể (CHỈ áp dụng khi chưa có buffer; đã preload id khác
      * thì show id đang có, [index] bỏ qua). Đang có 1 show chờ -> bỏ qua (double-tap). Lỗi -> [onError].
      */
-    fun show(activity: Activity, index: Int = -1) {
+    fun show(activity: Activity, index: Int = -1, customIds: List<String>? = null) {
         if (activity.isDead()) { fail(AdmErrorType.ACTIVITY_IS_NOT_AVAILABLE); return }
         premiumBlock()?.let { fail(it); return }
         if (pendingActivity != null) { log("đang chờ show, bỏ qua (double-tap)"); return }
@@ -154,9 +155,9 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
         val id = preloadUnitId
         if (id != null && RewardedAdPreloader.isAdAvailable(id)) { showWithDelay(activity, id); return }
 
-        // Chưa sẵn -> kiểm tra điều kiện, bật preload (theo index nếu chưa preload), rồi chờ.
+        // Chưa sẵn -> kiểm tra điều kiện, bật preload (theo index/customIds nếu chưa preload), rồi chờ.
         preloadError()?.let { fail(it); return }
-        if (preloadUnitId == null) load(index)
+        if (preloadUnitId == null) load(index, customIds)
         waitForAd(activity)
     }
 

@@ -67,6 +67,7 @@ class _AdmUMP(private val activity: Activity) {
     fun initUMP(
         testDeviceHashedIds: List<String> = emptyList(),
         showNetworkErrorDialog: Boolean = true,
+        onAdsInitialized: () -> Unit = {},
         gatherConsentFinished: () -> Unit,
     ) {
         // Offline -> UMP không fetch form được. Hiện dialog retry (hoặc chạy tiếp nếu tắt dialog).
@@ -74,14 +75,14 @@ class _AdmUMP(private val activity: Activity) {
             if (showNetworkErrorDialog) {
                 DialogHelper.showNoNetworkDialog(
                     activity = activity,
-                    onRetry = { initUMP(testDeviceHashedIds, showNetworkErrorDialog, gatherConsentFinished) },
+                    onRetry = { initUMP(testDeviceHashedIds, showNetworkErrorDialog, onAdsInitialized, gatherConsentFinished) },
                     onCancel = {
-                        if (canRequestAds) initializeAds(testDeviceHashedIds)
+                        if (canRequestAds) initializeAds(testDeviceHashedIds, onAdsInitialized)
                         gatherConsentFinished()
                     },
                 )
             } else {
-                if (canRequestAds) initializeAds(testDeviceHashedIds)
+                if (canRequestAds) initializeAds(testDeviceHashedIds, onAdsInitialized)
                 gatherConsentFinished()
             }
             return
@@ -95,7 +96,7 @@ class _AdmUMP(private val activity: Activity) {
         }
 
         // Thử init ad bằng consent của phiên trước, trước khi form xử lý xong.
-        if (canRequestAds) initializeAds(testDeviceHashedIds)
+        if (canRequestAds) initializeAds(testDeviceHashedIds, onAdsInitialized)
 
         consentInformation.requestConsentInfoUpdate(
             activity,
@@ -106,14 +107,14 @@ class _AdmUMP(private val activity: Activity) {
                     if (formError != null) {
                         Log.w(TAG, "Consent form error ${formError.errorCode}: ${formError.message}")
                     }
-                    if (canRequestAds) initializeAds(testDeviceHashedIds)
+                    if (canRequestAds) initializeAds(testDeviceHashedIds, onAdsInitialized)
                     gatherConsentFinished()
                 }
             },
             { requestError: FormError ->
                 // Update lỗi — chạy tiếp với consent hiện đang có.
                 Log.w(TAG, "Consent update failed ${requestError.errorCode}: ${requestError.message}")
-                if (canRequestAds) initializeAds(testDeviceHashedIds)
+                if (canRequestAds) initializeAds(testDeviceHashedIds, onAdsInitialized)
                 gatherConsentFinished()
             },
         )
@@ -129,7 +130,7 @@ class _AdmUMP(private val activity: Activity) {
     /** Reset consent đã lưu. Chỉ dùng debug. */
     fun resetConsent() = consentInformation.reset()
 
-    private fun initializeAds(testDeviceHashedIds: List<String>) {
+    private fun initializeAds(testDeviceHashedIds: List<String>, onAdsInitialized: () -> Unit = {}) {
         if (isAdsInitCalled.getAndSet(true)) return
 
         val appId = readAppId()
@@ -147,6 +148,7 @@ class _AdmUMP(private val activity: Activity) {
             ) {
                 Log.d(TAG, "Mobile Ads SDK initialized.")
                 com.gsx.googleadcompose.GoogleAds.AdCore.isMobileAdsReady = true
+                activity.runOnUiThread { onAdsInitialized() }   // ads sẵn -> báo app (preload...)
             }
             if (testDeviceHashedIds.isNotEmpty()) {
                 MobileAds.setRequestConfiguration(

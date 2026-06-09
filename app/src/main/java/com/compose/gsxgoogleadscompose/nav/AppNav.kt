@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeContentPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -17,6 +18,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,6 +33,10 @@ import androidx.compose.ui.unit.sp
 import com.gsx.googleadcompose.GoogleAds.AdmBanner
 import com.gsx.googleadcompose.GoogleAds.AdmBannerCollapsible
 import com.gsx.googleadcompose.GoogleAds.AdmBannerSize
+import com.google.android.libraries.ads.mobile.sdk.nativead.NativeAd
+import com.gsx.googleadcompose.GoogleAds.nativead.AdmNative
+import com.gsx.googleadcompose.GoogleAds.nativead.AdmNativeAd
+import com.gsx.googleadcompose.GoogleAds.nativead.NativeLayout
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -41,6 +47,8 @@ import com.compose.gsxgoogleadscompose.common.PremiumStatusText
 import com.compose.gsxgoogleadscompose.premium.PremiumScreen
 import com.compose.gsxgoogleadscompose.interstitial.InterstitialScreen
 import com.compose.gsxgoogleadscompose.open.OpenScreen
+import com.compose.gsxgoogleadscompose.nativefull.NativeFullScreen
+import com.compose.gsxgoogleadscompose.onboarding.OnboardingScreen
 import com.compose.gsxgoogleadscompose.rewardinterstitial.RewardInterstitialScreen
 import com.compose.gsxgoogleadscompose.reward.RewardScreen
 import com.gsx.googleadcompose.utils.PreferencesManager
@@ -52,6 +60,8 @@ private object Route {
     const val INTER = "inter"
     const val REWARD_INTER = "rewardinter"
     const val OPEN = "open"
+    const val NATIVE_FULL = "nativefull"
+    const val ONBOARDING = "onboarding"
     const val PREMIUM = "premium?fromSplash={fromSplash}"
     fun premium(fromSplash: Boolean) = "premium?fromSplash=$fromSplash"
 }
@@ -66,7 +76,7 @@ fun AppNav() {
         composable(Route.SPLASH) {
             SplashScreen(onDone = {
                 val dest = if (PreferencesManager.getInstance().isShowOnBoard())
-                    Route.premium(fromSplash = true) else Route.MAIN
+                    Route.ONBOARDING else Route.MAIN
                 nav.navigate(dest) { popUpTo(Route.SPLASH) { inclusive = true } }
             })
         }
@@ -97,6 +107,7 @@ fun AppNav() {
                 onOpenInter = { nav.navigate(Route.INTER) },
                 onOpenRewardInter = { nav.navigate(Route.REWARD_INTER) },
                 onOpenAppOpen = { nav.navigate(Route.OPEN) },
+                onOpenNativeFull = { nav.navigate(Route.NATIVE_FULL) },
             )
         }
 
@@ -104,6 +115,12 @@ fun AppNav() {
         composable(Route.INTER) { InterstitialScreen() }
         composable(Route.REWARD_INTER) { RewardInterstitialScreen() }
         composable(Route.OPEN) { OpenScreen() }
+        composable(Route.NATIVE_FULL) { NativeFullScreen(onClose = { nav.popBackStack() }) }
+        composable(Route.ONBOARDING) {
+            OnboardingScreen(onDone = {
+                nav.navigate(Route.MAIN) { popUpTo(Route.ONBOARDING) { inclusive = true } }
+            })
+        }
     }
 }
 
@@ -115,11 +132,18 @@ private fun MainScreen(
     onOpenInter: () -> Unit,
     onOpenRewardInter: () -> Unit,
     onOpenAppOpen: () -> Unit,
+    onOpenNativeFull: () -> Unit,
 ) {
     LaunchedEffect(Unit) { PreferencesManager.getInstance().setShowOnBoard(false) }
 
     var bannerSize by remember { mutableStateOf(AdmBannerSize.ADAPTIVE) }
     var bannerCollapsible by remember { mutableStateOf(AdmBannerCollapsible.NONE) }
+    var nativeLayout by remember { mutableStateOf(NativeLayout.NORMAL) }
+
+    // Preload native 1 lần -> lưu ngoài, truyền vào AdmNative (đổi layout chỉ re-render).
+    var nativeAd by remember { mutableStateOf<NativeAd?>(null) }
+    LaunchedEffect(Unit) { AdmNativeAd.preload(index = 1) { nativeAd = it } }
+    DisposableEffect(Unit) { onDispose { nativeAd?.destroy() } }
 
     Column(
         modifier = Modifier
@@ -132,7 +156,8 @@ private fun MainScreen(
                 .weight(1f)
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+                .safeContentPadding()
+                .padding(0.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text("Main", color = Color(0xFF52DE11), fontSize = 32.sp, fontWeight = FontWeight.W700)
@@ -160,6 +185,11 @@ private fun MainScreen(
                 onClick = onOpenAppOpen,
                 modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
             ) { Text("App Open") }
+
+            OutlinedButton(
+                onClick = onOpenNativeFull,
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            ) { Text("Native Full") }
 
             // ----- Chọn size banner -----
             Text(
@@ -196,6 +226,43 @@ private fun MainScreen(
                         label = { Text(c.name) },
                     )
                 }
+            }
+
+            // ----- Native (chọn layout, hiện shimmer lúc load) -----
+            Text(
+                "Native layout",
+                color = Color.White,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(top = 24.dp, bottom = 8.dp),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NativeLayout.entries.forEach { l ->
+                    FilterChip(
+                        selected = nativeLayout == l,
+                        onClick = { nativeLayout = l },
+                        label = { Text(l.name) },
+                    )
+                }
+            }
+            AdmNative(
+                modifier = Modifier.fillMaxWidth(),
+                layout = nativeLayout,
+                nativeAd = nativeAd,                      // preload -> truyền vào, null thì skip
+            ) {
+                backgroundColor = Color(0xFF222B45)       // nền card
+                ctaColor = Color(0xFFFF6D00)              // nền nút install (cam)
+                ctaTextColor = Color.White                // chữ nút
+                onPaid = { v -> Log.d("AdmNative", "paid $v") }
+            }
+            AdmNative(
+                modifier = Modifier.fillMaxWidth(),
+                layout = nativeLayout,
+                index = 2                    // preload -> truyền vào, null thì skip
+            ) {
+                backgroundColor = Color(0xFF222B45)       // nền card
+                ctaColor = Color(0xFFFF6D00)              // nền nút install (cam)
+                ctaTextColor = Color.White                // chữ nút
+                onPaid = { v -> Log.d("AdmNative", "paid $v") }
             }
         }
 

@@ -22,7 +22,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.compose.gsxgoogleadscompose.common.PremiumStatusText
 import com.gsx.googleadcompose.GlobalVariables
-import com.gsx.googleadcompose.GoogleAds.AdmOpenResume
+import androidx.compose.ui.res.stringArrayResource
+import com.compose.gsxgoogleadscompose.R
+import com.gsx.googleadcompose.GoogleAds.AdmOpen
+import com.gsx.googleadcompose.GoogleAds.nativead.AdmNativeSequenceState
 import com.gsx.googleadcompose.GoogleConsent.AdmUMP
 import com.gsx.googleadcompose.GoogleIAP.BillingClient
 import com.gsx.googleadcompose.GoogleIAP.BillingEvents
@@ -42,19 +45,26 @@ fun SplashScreen(
     var requestGo by remember { mutableStateOf(false) }
     val go: () -> Unit = { requestGo = true }
 
+    // Open ad splash = instance RIÊNG (tách khỏi resume), tự load+show, tự destroy khi rời splash.
+    val openSplash = AdmOpen()
+    val openIds = stringArrayResource(R.array.app_open_ad_units_custom).toList()   // đọc resource ở scope composable
+
     LaunchedEffect(requestGo) {
         if (requestGo && !navigated) {
             navigated = true
-            // Show open ad trên splash; đóng/lỗi/timeout -> mới vào main.
-            AdmOpenResume.showFromSplash { onDone() }
+            openSplash.showFromSplash(customIds = openIds) { onDone() }
         }
     }
-    GlobalVariables.canShowOpenAd = false
     BillingEvents(onProductsFetched = { go() })
-
-    // UMP consent + init MobileAds 1 lần cho toàn app (các màn sau chỉ check AdCore.isMobileAdsReady).
+    // UMP consent + init MobileAds 1 lần. onAdsInitialized bắn khi ads SẴN -> preload (khỏi poll).
     val ump = AdmUMP()
-    LaunchedEffect(Unit) { ump.initUMP(gatherConsentFinished = {}) }
+    LaunchedEffect(Unit) {
+        ump.initUMP(
+            onAdsInitialized = {     AdmNativeSequenceState.init(listOf(0, 1, 2, 3,4))
+            },
+            gatherConsentFinished = {},
+        )
+    }
 
     LaunchedEffect(Unit) {
         if (BillingClient.isProductsFetched) {
