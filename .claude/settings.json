@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:developers.google.com)",
+      "WebFetch(domain:www.revenuecat.com)",
+      "WebFetch(domain:api.github.com)"
+    ]
+  }
+}
