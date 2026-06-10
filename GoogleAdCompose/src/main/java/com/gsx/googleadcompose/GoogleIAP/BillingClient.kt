@@ -344,6 +344,16 @@ object BillingClient {
                 trialPeriod = trialPhase?.billingPeriod,
                 billingPeriod = basePhase?.billingPeriod ?: "",
                 currencyCode = basePhase?.priceCurrencyCode ?: "",
+                phases = phases.map { p ->
+                    PhaseInfo(
+                        priceMicros = p.priceAmountMicros,
+                        formattedPrice = p.formattedPrice,
+                        currencyCode = p.priceCurrencyCode,
+                        billingPeriod = p.billingPeriod,
+                        recurrenceMode = p.recurrenceMode,
+                        billingCycleCount = p.billingCycleCount,
+                    )
+                },
             )
         }
     }
