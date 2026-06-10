@@ -116,7 +116,7 @@ class AdmOpenAd internal constructor() : AppOpenAdEventCallback {
         timeoutMs: Long = 8_000L,
         onClosed: () -> Unit,
     ) {
-        if (!GlobalVariables.canShowOpenAd) { log("canShowOpenAd=false -> skip splash open"); onClosed(); return }
+//        if (!GlobalVariables.canShowOpenAd) { log("canShowOpenAd=false -> skip splash open"); onClosed(); return }
         splashClosed = onClosed
         val t = Runnable { log("splash open timeout ${timeoutMs}ms"); consumeSplash() }
         splashTimeout = t
