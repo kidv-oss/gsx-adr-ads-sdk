@@ -1,5 +1,7 @@
 # GSX Google Ads Compose
 
+[![](https://jitpack.io/v/kidv-oss/gsx-adr-ads-sdk.svg)](https://jitpack.io/#kidv-oss/gsx-adr-ads-sdk)
+
 Thư viện gói **Google Mobile Ads (GMA Next-Gen SDK)**, **UMP consent** và **Google Play Billing v9** cho **Jetpack Compose**. Mọi loại ad bọc thành composable / helper: tự load, tự preload, tự destroy khi rời màn, tự chặn khi user premium hoặc offline.
 
 - Module thư viện: `:GoogleAdCompose` (package `com.gsx.googleadcompose`)
