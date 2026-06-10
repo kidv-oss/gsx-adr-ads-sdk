@@ -43,11 +43,11 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    implementation("com.github.LuongHung297:g_x_a_d_compose:0.6")
+    implementation("")
 }
 ```
 
-Đổi `0.6` sang version release mới nhất hoặc commit hash. Xem tag ở [JitPack](https://jitpack.io/#LuongHung297/g_x_a_d_compose).
+Đổi `` sang version release mới nhất hoặc commit hash. Xem tag ở [JitPack](https://jitpack.io/#LuongHung297/g_x_a_d_compose).
 
 Lib đã `api(...)` sẵn `ads.mobile.sdk` (GMA Next-Gen) + `billing.ktx`, app không cần khai báo lại.
 
@@ -59,7 +59,7 @@ Lib đã `api(...)` sẵn `ads.mobile.sdk` (GMA Next-Gen) + `billing.ktx`, app k
 <application android:name=".App">
     <meta-data
         android:name="com.google.android.gms.ads.APPLICATION_ID"
-        android:value="@string/admob_app_id" />
+        android:value="YOUR_APPLICATION_ID" />
 </application>
 ```
 

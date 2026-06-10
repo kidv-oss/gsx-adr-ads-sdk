@@ -45,16 +45,26 @@ private data class PlanUi(
     val hasTrial: Boolean,
     val trial: String?,
     val time: String,
+    val discountPercent: Int = 0,    // % rẻ hơn so với mua lẻ theo tháng
+    val originalPrice: String? = null, // giá gốc gạch ngang (Monthly×12)
 )
 
 private fun buildPlans(): List<PlanUi> = MyProducts.all.map { id ->
+    // Ưu tiên offer có discount (intro rẻ hơn base, cùng kỳ); không thì offer đầu.
+    val offers = BillingClient.getOfferPricing(id)
+    val offer = offers.firstOrNull { it.hasDiscount } ?: offers.firstOrNull()
+
     PlanUi(
         id = id,
         title = MyProducts.title(id),
-        price = BillingClient.getPrice(id) ?: "",
+        // Có discount -> hiện giá sale; không -> giá thường.
+        price = offer?.takeIf { it.hasDiscount }?.salePrice
+            ?: BillingClient.getPrice(id) ?: "",
         hasTrial = BillingClient.hasFreeTrial(id),
         trial = BillingClient.getFreeTrialPeriod(id),
         time = MyProducts.Time(id),
+        discountPercent = offer?.discountPercent ?: 0,
+        originalPrice = offer?.takeIf { it.hasDiscount }?.basePrice,
     )
 }
 @Composable
@@ -204,7 +214,21 @@ private fun PlanCard(plan: PlanUi, selected: Boolean, onSelect: () -> Unit) {
                 .padding(16.dp),
         ) {
             Column {
-                Text(plan.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(plan.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    if (plan.discountPercent > 0) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "-${plan.discountPercent}%",
+                            color = Color(0xFF062100),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            modifier = Modifier
+                                .background(Color(0xFF52DE11), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                }
                 if (plan.hasTrial) {
                     Text(
                         "Free trial ${plan.trial ?: ""}",
@@ -214,10 +238,21 @@ private fun PlanCard(plan: PlanUi, selected: Boolean, onSelect: () -> Unit) {
                 }
             }
             Spacer(Modifier.weight(1f))
-            Text(plan.price, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            if(plan.time != ""){
-                Text(plan.time, color = Color.Green, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-
+            Column(horizontalAlignment = Alignment.End) {
+                if (plan.originalPrice != null) {
+                    Text(
+                        plan.originalPrice,
+                        color = Color(0xFFB9AED0),
+                        fontSize = 13.sp,
+                        textDecoration = androidx.compose.ui.text.style.TextDecoration.LineThrough,
+                    )
+                }
+                Row {
+                    Text(plan.price, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    if (plan.time != "") {
+                        Text(plan.time, color = Color.Green, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    }
+                }
             }
         }
     }

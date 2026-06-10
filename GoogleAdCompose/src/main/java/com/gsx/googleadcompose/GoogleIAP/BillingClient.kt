@@ -301,6 +301,53 @@ object BillingClient {
         return null
     }
 
+    /**
+     * Pricing đầy đủ của từng offer (subscription): giá gốc, giá sau discount, % giảm, trial.
+     * Mỗi offer trên Play Console -> 1 [OfferPricing]. Rỗng nếu không phải sub / chưa fetch.
+     *
+     * Trong 1 offer các phase chạy theo thứ tự: trial (giá 0) -> intro/discount (FINITE, giá thấp)
+     * -> base định kỳ (INFINITE, giá gốc). % giảm = so phase intro với phase base.
+     */
+    fun getOfferPricing(productId: String): List<OfferPricing> {
+        val offers = productDetailsMap[productId]?.subscriptionOfferDetails ?: return emptyList()
+        return offers.map { offer ->
+            val phases = offer.pricingPhases.pricingPhaseList
+
+            // Phase định kỳ chính = INFINITE_RECURRING; fallback: phase trả tiền cuối cùng.
+            val basePhase = phases.lastOrNull {
+                it.recurrenceMode == ProductDetails.RecurrenceMode.INFINITE_RECURRING && it.priceAmountMicros > 0
+            } ?: phases.lastOrNull { it.priceAmountMicros > 0 }
+
+            // Phase intro/discount = trả tiền (>0), rẻ hơn base VÀ CÙNG billingPeriod với base.
+            // Bắt buộc cùng kỳ: tránh so giá khác chu kỳ (vd 52k/tuần vs 289k/tháng) ra % rác.
+            val baseMicros = basePhase?.priceAmountMicros ?: 0L
+            val basePeriod = basePhase?.billingPeriod
+            val salePhase = phases.firstOrNull {
+                it.priceAmountMicros in 1 until baseMicros && it.billingPeriod == basePeriod
+            }
+
+            val trialPhase = phases.firstOrNull { it.priceAmountMicros == 0L }
+            val saleMicros = salePhase?.priceAmountMicros
+            val discount = if (baseMicros > 0 && saleMicros != null && saleMicros < baseMicros)
+                ((1 - saleMicros.toDouble() / baseMicros) * 100).toInt()
+            else 0
+
+            OfferPricing(
+                productId = productId,
+                offerToken = offer.offerToken,
+                basePriceMicros = baseMicros,
+                basePrice = basePhase?.formattedPrice ?: "",
+                salePriceMicros = saleMicros,
+                salePrice = salePhase?.formattedPrice,
+                discountPercent = discount,
+                hasFreeTrial = trialPhase != null,
+                trialPeriod = trialPhase?.billingPeriod,
+                billingPeriod = basePhase?.billingPeriod ?: "",
+                currencyCode = basePhase?.priceCurrencyCode ?: "",
+            )
+        }
+    }
+
     // ---- Connection -------------------------------------------------------------------------
 
     /** Connect (gọi nhiều lần an toàn). Khi ready: fetch products + restore purchases. */

@@ -39,6 +39,7 @@ class ComposeBilling internal constructor(private val activity: () -> Activity?)
     fun getPrice(productId: String): String? = BillingClient.getPrice(productId)
     fun hasFreeTrial(productId: String): Boolean = BillingClient.hasFreeTrial(productId)
     fun getFreeTrialPeriod(productId: String): String? = BillingClient.getFreeTrialPeriod(productId)
+    fun getOfferPricing(productId: String): List<OfferPricing> = BillingClient.getOfferPricing(productId)
 }
 
 /** Trạng thái premium dưới dạng Compose [State] (lifetime || sub || removeAds). */
