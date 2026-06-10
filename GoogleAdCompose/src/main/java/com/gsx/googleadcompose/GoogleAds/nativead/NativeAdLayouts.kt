@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -624,8 +625,10 @@ fun NativeAdFullLayout(
 ) {
     NativeAdView(ad, modifier) {
         Box(modifier = Modifier
+
             .fillMaxSize()
-            .background(Color(0xFF000000))) {
+            .background(Color(0xFF000000)
+            )) {
             // ===== Media phủ toàn màn =====
             NativeAdMediaView(modifier = Modifier.matchParentSize())
 
@@ -634,6 +637,7 @@ fun NativeAdFullLayout(
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .fillMaxWidth()
+                    .safeDrawingPadding()
                     .padding(12.dp),
             ) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -664,7 +668,8 @@ fun NativeAdFullLayout(
             // ===== Nhóm đáy đè lên media: dải + card + swipe =====
             Column(modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .fillMaxWidth()) {
+                .fillMaxWidth()
+                .safeDrawingPadding()) {
                 // ----- Dải "Install now" | chevron ^ | "Ad" -----
                 Row(
                     modifier = Modifier
@@ -729,19 +734,6 @@ fun NativeAdFullLayout(
                         }
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                // ----- Dòng swipe (trên media, dưới card) -----
-                Text(
-                    text = "‹-  swipe to continue  -›",
-                    color = Color.Black,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.W600,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color.White)
-                        .padding(top = 10.dp, bottom = 16.dp),
-                    textAlign = TextAlign.Center,
-                )
             }
         }
     }

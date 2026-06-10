@@ -72,7 +72,7 @@ fun OnboardingScreen(onDone: () -> Unit = {}) {
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF120726))
-            .safeDrawingPadding(),
+            ,
     ) {
         HorizontalPager(state = pager, modifier = Modifier.weight(1f).fillMaxWidth()) { page ->
             val active = page == pager.currentPage          // chỉ trang đang xem mới consume ad
