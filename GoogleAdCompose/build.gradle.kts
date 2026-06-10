@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.compose)
+    `maven-publish`
 }
 
 android {
@@ -33,6 +34,22 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+    publishing {
+        singleVariant("release") {
+            withSourcesJar()
+        }
+    }
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("release") {
+                // groupId/artifactId/version do JitPack tự set theo repo + git tag.
+                from(components["release"])
+            }
+        }
     }
 }
 
