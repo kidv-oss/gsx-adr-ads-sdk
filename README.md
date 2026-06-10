@@ -25,21 +25,29 @@ Thư viện gói **Google Mobile Ads (GMA Next-Gen SDK)**, **UMP consent** và *
 
 ## 1. Cài đặt
 
-### 1.1 Thêm module
+### 1.1 Thêm dependency (JitPack)
 
-`settings.gradle.kts`:
+`settings.gradle.kts` — thêm repo JitPack:
 
 ```kotlin
-include(":GoogleAdCompose")
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }
+    }
+}
 ```
 
 `app/build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation(project(":GoogleAdCompose"))
+    implementation("com.github.LuongHung297:g_x_a_d_compose:Tag")
 }
 ```
+
+Thay `Tag` bằng version release (vd `1.0.0`) hoặc commit hash. Xem tag mới nhất ở [JitPack](https://jitpack.io/#LuongHung297/g_x_a_d_compose).
 
 Lib đã `api(...)` sẵn `ads.mobile.sdk` (GMA Next-Gen) + `billing.ktx`, app không cần khai báo lại.
 
@@ -358,13 +366,7 @@ PreferencesManager.getInstance().isSUB()        // có sub/lifetime
 PreferencesManager.getInstance().isRemoveAds()  // remove-ads
 ```
 
-Premium → lib tự set `GlobalVariables.isShowSub = false` + `canShowOpenAd = false`, mọi ad tự báo `CLIENT_HAVE_SUB` / `CLIENT_HAVE_BEEN_REMOVED_AD` và **không render**.
-
-Remove-ads do app tự cấp (vd reward/promo):
-
-```kotlin
-BillingClient.setRemoveAds(true)
-```
+Premium → lib tự set `GlobalVariables.isShowSub = false` + `canShowOpenAd = false`, mọi ad tự báo `CLIENT_HAVE_SUB` / `CLIENT_HAVE_BEEN_REMOVED_AD` và **không render**. Remove-ads do app tự cấp: `BillingClient.setRemoveAds(true)`.
 
 ---
 
