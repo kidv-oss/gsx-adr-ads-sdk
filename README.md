@@ -43,11 +43,11 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    implementation("")
+    implementation("com.github.kidv-oss:gsx-adr-ads-sdk:0.0.2")
 }
 ```
 
-Đổi `` sang version release mới nhất hoặc commit hash. Xem tag ở [JitPack](https://jitpack.io/#LuongHung297/g_x_a_d_compose).
+Đổi version sang tag release mới nhất hoặc commit hash. Xem các tag ở [JitPack](https://jitpack.io/#kidv-oss/gsx-adr-ads-sdk).
 
 Lib đã `api(...)` sẵn `ads.mobile.sdk` (GMA Next-Gen) + `billing.ktx`, app không cần khai báo lại.
 
