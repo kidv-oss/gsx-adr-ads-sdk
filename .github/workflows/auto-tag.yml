@@ -77,3 +77,16 @@ jobs:
           echo "new tag: $new"
           git tag "$new"
           git push origin "$new"
+
+          # --- Cập nhật version trong README (dòng implementation) ---
+          # Đổi gsx-adr-ads-sdk:X.Y[.Z] -> :$new. Commit [skip tag] để KHÔNG tự tag lại (tránh loop).
+          sed -i -E "s#(gsx-adr-ads-sdk:)[0-9]+(\.[0-9]+){1,2}#\1$new#g" README.md
+          if ! git diff --quiet README.md; then
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add README.md
+            git commit -m "docs: bump README install version to $new [skip tag]"
+            git push origin HEAD:main
+          else
+            echo "README đã đúng version, bỏ qua"
+          fi
