@@ -1,0 +1,79 @@
+name: Auto tag on push
+
+# ============================================================================
+#  AUTO-TAG: push main -> tạo tag mới nếu commit message có MARKER.
+#  Mặc định KHÔNG tag. Tag hiện tại: 0.0.2
+# ============================================================================
+#
+#  Commit message chứa   ->  Bump            ->  VD từ 0.0.2
+#  --------------------------------------------------------------------------
+#  [FIX]                     PATCH (x.y.Z+1)     0.0.2 -> 0.0.3
+#  [FIX BIG]                 MINOR (x.Y+1.0)     0.0.2 -> 0.1.0
+#  [RELEASE]                 MAJOR (X+1.0.0)     0.0.2 -> 1.0.0
+#  [SKIP TAG] / không có gì  KHÔNG tag           giữ nguyên
+#
+#  VÍ DỤ:
+#    git commit -m "sửa preload [FIX]"             -> 0.0.3
+#    git commit -m "thêm tính năng [FIX BIG]"      -> 0.1.0
+#    git commit -m "bản chính thức [RELEASE]"      -> 1.0.0
+#    git commit -m "update readme"                 -> không tag
+#
+#  Lưu ý:
+#   - Thứ tự check: [FIX BIG] -> [FIX] -> [RELEASE] (FIX BIG chứa FIX).
+#   - Push TAG không trigger lại (chỉ chạy branch main) -> không loop.
+#   - Cần bật: Settings > Actions > Workflow permissions > Read and write.
+# ============================================================================
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tag theo marker trong commit message
+        run: |
+          set -e
+          msg=$(git log -1 --pretty=%B)
+          echo "commit msg: $msg"
+
+          # Quyết định loại bump theo marker (FIX RELEASE check trước).
+          if echo "$msg" | grep -q '\[SKIP TAG\]'; then
+            echo "[SKIP TAG] -> không tag"; exit 0
+          elif echo "$msg" | grep -q '\[FIX BIG\]'; then
+            bump="minor"
+          elif echo "$msg" | grep -q '\[FIX\]'; then
+            bump="patch"
+          elif echo "$msg" | grep -q '\[RELEASE\]'; then
+            bump="major"
+          else
+            echo "Không có marker -> không tag"; exit 0
+          fi
+          echo "bump=$bump"
+
+          git fetch --tags --force
+          # Tag semver mới nhất (chỉ x.y / x.y.z).
+          latest=$(git tag --sort=-v:refname | grep -E '^[0-9]+(\.[0-9]+){1,2}$' | head -n1)
+          if [ -z "$latest" ]; then latest="0.0.0"; fi
+          IFS='.' read -r a b c <<< "$latest"
+          a=${a:-0}; b=${b:-0}; c=${c:-0}
+          echo "latest=$latest"
+
+          case "$bump" in
+            patch) c=$((c+1)) ;;
+            minor) b=$((b+1)); c=0 ;;
+            major) a=$((a+1)); b=0; c=0 ;;
+          esac
+
+          new="$a.$b.$c"
+          echo "new tag: $new"
+          git tag "$new"
+          git push origin "$new"

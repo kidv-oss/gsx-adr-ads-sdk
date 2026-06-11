@@ -57,7 +57,8 @@ class AdmInterstitialAd internal constructor() : InterstitialAdEventCallback {
     var onError: (AdmErrorType) -> Unit = {}
 
     // ---- Hook sự kiện cho app ----
-    var onAvailable: () -> Unit = {}     // buffer có ad sẵn (PreloadCallback.onAdPreloaded)
+    /** Buffer có ad sẵn (preload xong) -> trả [ResponseInfo] (ad object poll lúc show). */
+    var onAvailable: (ResponseInfo) -> Unit = {}
     var onExhausted: () -> Unit = {}     // buffer hết ad (PreloadCallback.onAdsExhausted)
     var onShowed: () -> Unit = {}
     var onImpression: () -> Unit = {}
@@ -91,6 +92,7 @@ class AdmInterstitialAd internal constructor() : InterstitialAdEventCallback {
      * (0-based) trong [AdmConfigAdId.listInterstitialAdUnitID]. Đang preload rồi -> bỏ qua. Lỗi -> [onError].
      */
     fun load(index: Int = -1, customIds: List<String>? = null) {
+        if (bailIfPremium()) return                 // premium -> dọn buffer + onError
         preloadError()?.let { fail(it); return }
         if (preloadUnitId != null) { log("đang preload ${tag()}, bỏ qua"); return }
 
@@ -107,7 +109,7 @@ class AdmInterstitialAd internal constructor() : InterstitialAdEventCallback {
             // ⚠ Google: KHÔNG gọi start/poll trực tiếp trong callback này -> post ra ngoài.
             override fun onAdPreloaded(preloadId: String, responseInfo: ResponseInfo) {
                 log("preloaded ${tag()}")
-                onAvailable()
+                onAvailable(responseInfo)
                 mainHandler.post { showPendingIfAny() }
             }
 
@@ -279,6 +281,15 @@ class AdmInterstitialAd internal constructor() : InterstitialAdEventCallback {
             pm.isSUB() -> AdmErrorType.CLIENT_HAVE_SUB
             else -> null
         }
+    }
+
+    /** Premium -> DỌN buffer preloader đang giữ + báo [onError], trả true (caller return). */
+    private fun bailIfPremium(): Boolean {
+        val err = premiumBlock() ?: return false
+        preloadUnitId?.let { InterstitialAdPreloader.destroy(it) }
+        preloadUnitId = null
+        fail(err)
+        return true
     }
 
     private fun preloadError(): AdmErrorType? {

@@ -65,7 +65,8 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
 
     // ---- Hook sự kiện cho app ----
     var onReward: (RewardItem) -> Unit = {}
-    var onAvailable: () -> Unit = {}     // buffer có ad sẵn (PreloadCallback.onAdPreloaded)
+    /** Buffer có ad sẵn (preload xong) -> trả [ResponseInfo] (ad object poll lúc show). */
+    var onAvailable: (ResponseInfo) -> Unit = {}
     var onExhausted: () -> Unit = {}     // buffer hết ad (PreloadCallback.onAdsExhausted)
     var onShowed: () -> Unit = {}
     var onImpression: () -> Unit = {}
@@ -99,6 +100,7 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
      * (0-based) trong [AdmConfigAdId.listRewardAdUnitID]. Đang preload rồi -> bỏ qua. Lỗi -> [onError].
      */
     fun load(index: Int = -1, customIds: List<String>? = null) {
+        if (bailIfPremium()) return                 // premium -> dọn buffer + onError
         preloadError()?.let { fail(it); return }
         if (preloadUnitId != null) { log("đang preload ${tag()}, bỏ qua"); return }
 
@@ -115,7 +117,7 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
             // ⚠ Google: KHÔNG gọi start/poll trực tiếp trong callback này -> post ra ngoài.
             override fun onAdPreloaded(preloadId: String, responseInfo: ResponseInfo) {
                 log("preloaded ${tag()}")
-                onAvailable()
+                onAvailable(responseInfo)
                 mainHandler.post { showPendingIfAny() }   // có show đang chờ -> bắn ra ngoài callback
             }
 
@@ -300,6 +302,15 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
     }
 
     /** Check điều kiện trước khi preload (premium/ump/network/đủ id). */
+    /** Premium -> DỌN buffer preloader đang giữ + báo [onError], trả true (caller return). */
+    private fun bailIfPremium(): Boolean {
+        val err = premiumBlock() ?: return false
+        preloadUnitId?.let { RewardedAdPreloader.destroy(it) }
+        preloadUnitId = null
+        fail(err)
+        return true
+    }
+
     private fun preloadError(): AdmErrorType? {
         premiumBlock()?.let { return it }
         if (!AdCore.isMobileAdsReady) return AdmErrorType.UMP_IS_NOT_ACTIVE

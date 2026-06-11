@@ -95,7 +95,8 @@ class AdmBannerAd internal constructor() : BannerAdEventCallback {
     var onError: (AdmErrorType) -> Unit = {}
 
     // ---- Hook sự kiện ----
-    var onLoaded: () -> Unit = {}
+    /** Ad load xong -> trả [BannerAd] (lấy `.responseInfo` nếu cần). */
+    var onLoaded: (BannerAd) -> Unit = {}
     var onImpression: () -> Unit = {}
     var onClicked: () -> Unit = {}
     var onPaid: (AdValue) -> Unit = {}   // doanh thu (paid event)
@@ -112,6 +113,9 @@ class AdmBannerAd internal constructor() : BannerAdEventCallback {
 
     /** True khi premium -> không nên hiện banner. */
     fun isBlockedByPremium(): Boolean = premiumBlock() != null
+
+    /** Loại lỗi premium (removeAds/lifetime/sub) chặn banner, null nếu không bị chặn. */
+    fun premiumBlockError(): AdmErrorType? = premiumBlock()
 
     // ============================ Load ============================
 
@@ -148,7 +152,7 @@ class AdmBannerAd internal constructor() : BannerAdEventCallback {
                 }
                 bannerAd = ad
                 log("loaded ${tag()}")
-                onLoaded()
+                onLoaded(ad)
                 ad
             }
             is AdLoadResult.Failure -> {
@@ -274,7 +278,13 @@ fun AdmBanner(
     // Key theo size/collapsible -> đổi cấu hình tự reload, call-site KHỎI cần key() bọc ngoài.
     // customIds != null -> xoay vòng list id đó thay cho AdmConfigAdId.listBannerAdUnitID.
     LaunchedEffect(activity, index, customIds, controller.size, controller.collapsible) {
-        if (isPreview || blocked) return@LaunchedEffect
+        if (isPreview) return@LaunchedEffect
+        if (blocked) {
+            // Premium/removeAds -> báo error (không im lặng), rồi render rỗng.
+            controller.onError(controller.premiumBlockError() ?: AdmErrorType.CLIENT_HAVE_BEEN_REMOVED_AD)
+            failed = true
+            return@LaunchedEffect
+        }
         if (activity == null) {
             controller.onError(AdmErrorType.ACTIVITY_IS_NOT_AVAILABLE); failed = true; return@LaunchedEffect
         }

@@ -65,7 +65,8 @@ class AdmNativeAd internal constructor() : NativeAdEventCallback {
     var onError: (AdmErrorType) -> Unit = {}
 
     // ---- Hook sự kiện ----
-    var onLoaded: () -> Unit = {}
+    /** Ad load xong -> trả [NativeAd] (lấy `.responseInfo` nếu cần). */
+    var onLoaded: (NativeAd) -> Unit = {}
     var onImpression: () -> Unit = {}
     var onClicked: () -> Unit = {}
     var onPaid: (AdValue) -> Unit = {}
@@ -81,6 +82,9 @@ class AdmNativeAd internal constructor() : NativeAdEventCallback {
 
     /** True khi premium -> không nên hiện. */
     fun isBlockedByPremium(): Boolean = premiumBlock() != null
+
+    /** Loại lỗi premium (removeAds/lifetime/sub) chặn native, null nếu không bị chặn. */
+    fun premiumBlockError(): AdmErrorType? = premiumBlock()
 
     // ============================ Load ============================
 
@@ -119,7 +123,7 @@ class AdmNativeAd internal constructor() : NativeAdEventCallback {
                 log("loaded ${tag()}")
                 ad.adEventCallback = this@AdmNativeAd
                 nativeAd = ad
-                onLoaded()
+                onLoaded(ad)
                 onResult(ad)
             }
 
@@ -187,6 +191,12 @@ class AdmNativeAd internal constructor() : NativeAdEventCallback {
     companion object {
         private const val TAG = "GoogleAds/Native"
         private var cursor = 0
+
+        /** True khi premium (removeAds/lifetime/sub) -> không hiện native (kể cả shimmer). */
+        fun isPremiumBlocked(): Boolean {
+            val pm = PreferencesManager.getInstance()
+            return pm.isRemoveAds() || pm.isLifetime() || pm.isSUB()
+        }
 
         /**
          * Preload native — load rồi trả [NativeAd] qua [onResult] để app tự lưu (map/list) + truyền
@@ -350,6 +360,8 @@ fun AdmNativeSequence(
     active: Boolean = true,
     configure: AdmNativeAd.() -> Unit = {},
 ) {
+    if (AdmNativeAd.isPremiumBlocked()) return            // premium -> render rỗng ngay, KHÔNG shimmer (tránh nháy)
+
     val resolved = AdmNativeSequenceState.resolved       // observe: slot load XONG thật (sẵn hoặc fail)
     var consumed by remember { mutableStateOf(false) }
     var shown by remember { mutableStateOf<NativeAd?>(null) }
@@ -404,7 +416,13 @@ fun AdmNative(
 
     // Tự load CHỈ khi: không có ad preload + có yêu cầu self-load ([index] != null).
     LaunchedEffect(nativeAd, index, customIds, blocked) {
-        if (nativeAd != null || !wantSelf || blocked || isPreview) return@LaunchedEffect
+        if (isPreview) return@LaunchedEffect
+        if (blocked) {
+            // Premium/removeAds -> báo error (không im lặng), rồi render rỗng.
+            controller.onError(controller.premiumBlockError() ?: AdmErrorType.CLIENT_HAVE_BEEN_REMOVED_AD)
+            return@LaunchedEffect
+        }
+        if (nativeAd != null || !wantSelf) return@LaunchedEffect
         val cb: (NativeAd?) -> Unit = { result -> selfAd = result; failed = result == null }
         if (customIds != null) controller.loadIds(customIds, index ?: -1, cb)   // xoay vòng list truyền
         else controller.load(index ?: -1, cb)

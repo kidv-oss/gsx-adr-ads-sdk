@@ -43,7 +43,8 @@ class AdmOpenAd internal constructor() : AppOpenAdEventCallback {
     var onError: (AdmErrorType) -> Unit = {}
 
     // ---- Hook sự kiện cho app ----
-    var onAvailable: () -> Unit = {}
+    /** Buffer có ad sẵn (preload xong) -> trả [ResponseInfo] (ad object poll lúc show). */
+    var onAvailable: (ResponseInfo) -> Unit = {}
     var onExhausted: () -> Unit = {}
     var onShowed: () -> Unit = {}
     var onImpression: () -> Unit = {}
@@ -91,11 +92,18 @@ class AdmOpenAd internal constructor() : AppOpenAdEventCallback {
      */
     fun resumeAd(index: Int = -1, skipFirstStart: Boolean = true) {
         if (resumeObserver != null) { log("resumeAd đã bật"); return }
+        if (bailIfPremium()) { log("resumeAd: premium -> không bật"); return }  // premium: không preload/observer
         resumeIndex = index
         skipNextStart = skipFirstStart
         load(index)
         val obs = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_START) {
+                // Mua premium runtime -> dọn preloader + gỡ observer (ngừng hẳn).
+                if (bailIfPremium()) {
+                    resumeObserver?.let { ProcessLifecycleOwner.get().lifecycle.removeObserver(it) }
+                    resumeObserver = null
+                    return@LifecycleEventObserver
+                }
                 if (skipNextStart) { skipNextStart = false; log("ON_START đầu -> bỏ qua, chỉ preload"); return@LifecycleEventObserver }
                 if (!GlobalVariables.canShowOpenAd) { log("canShowOpenAd=false -> bỏ"); return@LifecycleEventObserver }
                 show(index, waitForLoad = false)   // chưa sẵn -> chỉ preload, KHÔNG show trễ
@@ -153,7 +161,8 @@ class AdmOpenAd internal constructor() : AppOpenAdEventCallback {
     /** Preload buffer cho id theo [index] (-1 xoay vòng). canShowOpenAd=false / đang preload -> bỏ. */
     private fun load(index: Int = -1, customIds: List<String>? = null, force: Boolean = false) {
         if (!force && !GlobalVariables.canShowOpenAd) { log("canShowOpenAd=false -> không load"); return }
-        preloadError()?.let { fail(it); return }
+        if (bailIfPremium()) return                 // premium -> dọn buffer + return
+        preloadError()?.let { fail(it); return }    // còn lại: UMP/network/empty
         if (preloadUnitId != null) { log("đang preload ${tag()}, bỏ qua"); return }
 
         // customIds != null -> xoay vòng list đó thay cho AdmConfigAdId.listOpenAdUnitID.
@@ -168,7 +177,7 @@ class AdmOpenAd internal constructor() : AppOpenAdEventCallback {
         AppOpenAdPreloader.start(unit, config, object : PreloadCallback {
             override fun onAdPreloaded(preloadId: String, responseInfo: ResponseInfo) {
                 loadedAtMs = System.currentTimeMillis()
-                log("preloaded ${tag()}"); onAvailable()
+                log("preloaded ${tag()}"); onAvailable(responseInfo)
                 mainHandler.post { if (wantShow) { wantShow = false; show(wantIndex, customIds = wantCustomIds) } }
             }
             override fun onAdsExhausted(preloadId: String) {
@@ -269,6 +278,18 @@ class AdmOpenAd internal constructor() : AppOpenAdEventCallback {
             pm.isSUB() -> AdmErrorType.CLIENT_HAVE_SUB
             else -> null
         }
+    }
+
+    /**
+     * Premium -> DỌN preloader buffer đang chạy + báo lỗi, trả true (caller phải return).
+     * Khác guard thường: preloader tự giữ buffer, chỉ `return` không đủ -> phải destroy.
+     */
+    private fun bailIfPremium(): Boolean {
+        val err = premiumBlock() ?: return false
+        preloadUnitId?.let { AppOpenAdPreloader.destroy(it) }
+        preloadUnitId = null
+        fail(err)
+        return true
     }
 
     private fun preloadError(): AdmErrorType? {

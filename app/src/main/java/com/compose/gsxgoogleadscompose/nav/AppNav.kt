@@ -263,6 +263,9 @@ private fun MainScreen(
                 ctaColor = Color(0xFFFF6D00)              // nền nút install (cam)
                 ctaTextColor = Color.White                // chữ nút
                 onPaid = { v -> Log.d("AdmNative", "paid $v") }
+                onError  = {
+                    Log.w("AdmNative", "lỗi: $it")
+                }
             }
         }
 
