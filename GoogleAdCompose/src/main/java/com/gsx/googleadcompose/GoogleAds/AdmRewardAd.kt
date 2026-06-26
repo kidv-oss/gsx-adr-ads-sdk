@@ -5,17 +5,15 @@ import android.app.AlertDialog
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.google.android.libraries.ads.mobile.sdk.common.AdLoadCallback
 import com.google.android.libraries.ads.mobile.sdk.common.AdRequest
 import com.google.android.libraries.ads.mobile.sdk.common.AdValue
 import com.google.android.libraries.ads.mobile.sdk.common.FullScreenContentError
 import com.google.android.libraries.ads.mobile.sdk.common.LoadAdError
-import com.google.android.libraries.ads.mobile.sdk.common.PreloadCallback
-import com.google.android.libraries.ads.mobile.sdk.common.PreloadConfiguration
 import com.google.android.libraries.ads.mobile.sdk.common.ResponseInfo
 import com.google.android.libraries.ads.mobile.sdk.rewarded.RewardItem
 import com.google.android.libraries.ads.mobile.sdk.rewarded.RewardedAd
 import com.google.android.libraries.ads.mobile.sdk.rewarded.RewardedAdEventCallback
-import com.google.android.libraries.ads.mobile.sdk.rewarded.RewardedAdPreloader
 import com.gsx.googleadcompose.GlobalVariables
 import com.gsx.googleadcompose.data.AdmConfigAdId
 import com.gsx.googleadcompose.error.AdmErrorType
@@ -25,27 +23,25 @@ import com.gsx.googleadcompose.utils.PreferencesManager
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Rewarded ad (GMA Next-Gen SDK) theo pattern Google git `RewardedFragment` — dùng
- * **[RewardedAdPreloader]**: preload sẵn vào buffer, show lấy ra bằng `pollAd`, SDK tự nạp
- * quảng cáo kế tiếp ngầm. Log tag `GoogleAds/Reward`.
+ * Rewarded ad (GMA Next-Gen SDK) — **one-shot** [RewardedAd.load]: load đúng 1 ad, giữ sẵn, show 1
+ * lần rồi bỏ. KHÔNG dùng preloader (preloader tự refill cái kế -> reward show on-demand 1 lần -> refill
+ * không bao giờ show -> phí matched request -> tụt show rate). Log tag `GoogleAds/Reward`.
  *
- * [load] = bật preload (gọi sớm). [show]:
- * - Buffer đã có ad -> show ngay.
- * - Buffer chưa kịp load -> hiện dialog loading, chờ buffer có ad rồi tự show (timeout
- *   [loadTimeoutMs] thì hủy + [onError]). Poll luôn gọi NGOÀI [PreloadCallback] (yêu cầu Google).
+ * [load] = load sẵn 1 ad (gọi sớm). [show]:
+ * - Ad đã sẵn -> show ngay (sau dialog [showDelayMs]).
+ * - Chưa kịp load -> dialog loading, chờ load xong tự show (timeout [loadTimeoutMs] thì hủy + [onError]).
  *
  * ```
  * val reward = AdmReward {           // composable helper -> trả [AdmRewardAd], tự destroy
  *     onReward = { item -> grant(item.amount) }
  *     onError  = { type -> toast(type) }
  * }
- * reward.load()              // bật preload sớm (vd onCreate)
- * // ... user bấm ...
- * reward.show(activity)      // sẵn -> show ngay; chưa -> dialog chờ rồi show
- * // rời màn:
- * reward.destroy()
+ * reward.load()              // load sẵn 1 ad (vd onCreate)
+ * reward.show(activity)      // sẵn -> show; chưa -> dialog chờ rồi show
+ * reward.destroy()           // rời màn
  * ```
  *
+ * Show xong -> ad bị bỏ, KHÔNG tự load cái kế (no refill). Cần show lại -> gọi [load]/[show] lần nữa.
  * Unit ID lấy từ [AdmConfigAdId.listRewardAdUnitID] (nhiều ID -> xoay vòng mỗi lần [load]).
  * Cần init MobileAds (UMP) trước.
  */
@@ -53,21 +49,18 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
 
     var enableLogging: Boolean = true
     var loadingText: String = "Loading..."
-    /** Show khi buffer chưa sẵn -> chờ tối đa ngần này rồi hủy. */
+    /** Show khi ad chưa sẵn -> chờ tối đa ngần này rồi hủy. */
     var loadTimeoutMs: Long = 12_000L
     /** Ad đã sẵn vẫn hiện dialog ngần này trước khi show (cho mượt). */
     var showDelayMs: Long = 2_000L
-    /** Số ad giữ sẵn trong buffer (mặc định SDK = 1). */
-    var bufferSize: Int = 1
 
     /** Kênh báo lỗi duy nhất (xem [AdmErrorType]). */
     var onError: (AdmErrorType) -> Unit = {}
 
     // ---- Hook sự kiện cho app ----
     var onReward: (RewardItem) -> Unit = {}
-    /** Buffer có ad sẵn (preload xong) -> trả [ResponseInfo] (ad object poll lúc show). */
+    /** Ad load xong (sẵn để show) -> trả [ResponseInfo]. */
     var onAvailable: (ResponseInfo) -> Unit = {}
-    var onExhausted: () -> Unit = {}     // buffer hết ad (PreloadCallback.onAdsExhausted)
     var onShowed: () -> Unit = {}
     var onImpression: () -> Unit = {}
     var onClicked: () -> Unit = {}
@@ -77,65 +70,66 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    /** Unit id đang preload (poll/isAvailable đều theo id này). */
-    private var preloadUnitId: String? = null
+    /** Ad đã load xong, giữ sẵn để show (null = chưa có). */
+    private var loadedAd: RewardedAd? = null
+    private var loading: Boolean = false
+    private var currentUnit: String? = null
     private var currentIndex: Int = -1
-    private fun tag(): String = "[#$currentIndex ${preloadUnitId ?: "-"}]"
+    private fun tag(): String = "[#$currentIndex ${currentUnit ?: "-"}]"
 
-    // ---- Trạng thái "show đang chờ buffer" ----
+    // ---- Trạng thái "show đang chờ ad load" ----
     private var pendingActivity: Activity? = null
     private var pendingDialog: AlertDialog? = null
     private var pendingDone: AtomicBoolean? = null
     private var pendingTimeout: Runnable? = null
     private var popupOwned = false   // instance này đang giữ mutex isShowPopup
 
-    /** True khi buffer có ad sẵn để show ngay. */
+    /** True khi đã có ad sẵn để show ngay. */
     val isReady: Boolean
-        get() = preloadUnitId?.let { RewardedAdPreloader.isAdAvailable(it) } == true
+        get() = loadedAd != null
 
     // ============================ API ============================
 
     /**
-     * Bật preload. [index] = -1 -> xoay vòng unit id kế tiếp; >=0 -> chọn cụ thể id thứ [index]
-     * (0-based) trong [AdmConfigAdId.listRewardAdUnitID]. Đang preload rồi -> bỏ qua. Lỗi -> [onError].
+     * Load sẵn 1 ad (gọi sớm). [index] = -1 -> xoay vòng unit id kế tiếp; >=0 -> chọn cụ thể id thứ
+     * [index] trong [AdmConfigAdId.listRewardAdUnitID]. Đã có ad / đang load -> bỏ qua.
      */
     fun load(index: Int = -1, customIds: List<String>? = null) {
-        if (bailIfPremium()) return                 // premium -> dọn buffer + onError
-        preloadError()?.let { fail(it); return }
-        if (preloadUnitId != null) { log("đang preload ${tag()}, bỏ qua"); return }
+        if (bailIfPremium()) return                 // premium -> bỏ ad + onError
+        loadError()?.let { fail(it); return }
+        if (loadedAd != null || loading) return     // đã có / đang load -> bỏ qua
 
         // customIds != null -> xoay vòng list đó thay cho AdmConfigAdId.listRewardAdUnitID.
         val u = customIds?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() } ?: units()
         val idx = if (index < 0) nextIndex(u.size) else index
         val unit = u.getOrNull(idx) ?: run { fail(AdmErrorType.AD_ID_IS_NOT_EXIST); return }
-        preloadUnitId = unit
+        currentUnit = unit
         currentIndex = idx
-        log("load (preload) ${tag()}${if (customIds != null) " [custom]" else ""}")
+        loading = true
+        log("load ${tag()}${if (customIds != null) " [custom]" else ""}")
 
-        val config = PreloadConfiguration(AdRequest.Builder(unit).build(), bufferSize)
-        RewardedAdPreloader.start(unit, config, object : PreloadCallback {
-            // ⚠ Google: KHÔNG gọi start/poll trực tiếp trong callback này -> post ra ngoài.
-            override fun onAdPreloaded(preloadId: String, responseInfo: ResponseInfo) {
-                log("preloaded ${tag()}")
-                onAvailable(responseInfo)
-                mainHandler.post { showPendingIfAny() }   // có show đang chờ -> bắn ra ngoài callback
+        RewardedAd.load(AdRequest.Builder(unit).build(), object : AdLoadCallback<RewardedAd> {
+            override fun onAdLoaded(ad: RewardedAd) {
+                loading = false
+                ad.adEventCallback = this@AdmRewardAd
+                loadedAd = ad
+                log("loaded ${tag()}")
+                ad.getResponseInfo()?.let { onAvailable(it) }
+                showPendingIfAny()   // có show đang chờ -> show luôn
             }
 
-            override fun onAdsExhausted(preloadId: String) {
-                log("exhausted ${tag()}")
-                onExhausted()
-            }
-
-            override fun onAdFailedToPreload(preloadId: String, adError: LoadAdError) {
-                log("preload FAIL ${tag()}: ${adError.code} ${adError.message}")
-                mainHandler.post { failPending(AdmErrorType.AD_IS_NOT_AVAILABLE) }
+            override fun onAdFailedToLoad(adError: LoadAdError) {
+                loading = false
+                currentUnit = null
+                log("load FAIL ${tag()}: ${adError.code} ${adError.message}")
+                failPending(AdmErrorType.AD_IS_NOT_AVAILABLE)
             }
         })
     }
 
     /**
      * Show dùng activity foreground tự lấy ([AdCore.currentActivity]). Không có -> [onError].
-     * [index]: chỉ dùng khi CHƯA preload -> load id đó rồi show (xem [show]).
+     * [index]: chỉ dùng khi CHƯA load -> load id đó rồi show (xem [show]).
      */
     fun show(index: Int = -1, customIds: List<String>? = null) {
         val act = AdCore.currentActivity ?: run { fail(AdmErrorType.ACTIVITY_IS_NOT_AVAILABLE); return }
@@ -143,9 +137,9 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
     }
 
     /**
-     * Show ad. Sẵn -> show ngay. Chưa kịp load -> bật preload (load id theo [index]) + dialog chờ buffer.
-     * [index] = -1 xoay vòng, >=0 chọn id cụ thể (CHỈ áp dụng khi chưa có buffer; đã preload id khác
-     * thì show id đang có, [index] bỏ qua). Đang có 1 show chờ -> bỏ qua (double-tap). Lỗi -> [onError].
+     * Show ad. Sẵn -> dialog showDelayMs rồi show. Chưa kịp load -> load id theo [index] + dialog chờ.
+     * [index] = -1 xoay vòng, >=0 chọn id cụ thể (CHỈ khi chưa có ad; đã load id khác thì show id đang
+     * có). Đang có 1 show chờ -> bỏ qua (double-tap). Lỗi -> [onError].
      */
     fun show(activity: Activity, index: Int = -1, customIds: List<String>? = null) {
         if (activity.isDead()) { fail(AdmErrorType.ACTIVITY_IS_NOT_AVAILABLE); return }
@@ -153,18 +147,15 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
         if (pendingActivity != null) { log("đang chờ show, bỏ qua (double-tap)"); return }
         if (GlobalVariables.isShowPopup) { log("full-screen/dialog khác đang hiện, bỏ qua"); return }
 
-        // Sẵn -> vẫn hiện dialog showDelayMs rồi show (dùng id đang buffer).
-        val id = preloadUnitId
-        if (id != null && RewardedAdPreloader.isAdAvailable(id)) { showWithDelay(activity, id); return }
+        if (loadedAd != null) { showWithDelay(activity); return }
 
-        // Chưa sẵn -> kiểm tra điều kiện, bật preload (theo index/customIds nếu chưa preload), rồi chờ.
-        preloadError()?.let { fail(it); return }
-        if (preloadUnitId == null) load(index, customIds)
+        loadError()?.let { fail(it); return }
+        if (loadedAd == null && !loading) load(index, customIds)   // chưa load -> load+show
         waitForAd(activity)
     }
 
-    /** Ad đã sẵn: hiện dialog [showDelayMs] rồi poll + show. Dùng chung cleanup pending. */
-    private fun showWithDelay(activity: Activity, id: String) {
+    /** Ad đã sẵn: hiện dialog [showDelayMs] rồi show. */
+    private fun showWithDelay(activity: Activity) {
         log("ad sẵn, dialog ${showDelayMs}ms rồi show ${tag()}")
         markPopup()
         pendingActivity = activity
@@ -175,26 +166,28 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
             if (done.compareAndSet(false, true)) {
                 cleanupPending()
                 if (activity.isDead()) fail(AdmErrorType.ACTIVITY_IS_NOT_AVAILABLE)
-                else pollAndShow(activity, id)
+                else pollAndShow(activity)
             }
         }
         pendingTimeout = run
         mainHandler.postDelayed(run, showDelayMs)
     }
 
-    /** Dừng preload, dọn buffer + hủy show đang chờ (gọi khi rời màn). */
+    /** Bỏ ad đang giữ + hủy show đang chờ (gọi khi rời màn). */
     fun destroy() {
         log("destroy ${tag()}")
         clearPending()
         releasePopup()
-        preloadUnitId?.let { RewardedAdPreloader.destroy(it) }
-        preloadUnitId = null
+        loadedAd?.destroy()
+        loadedAd = null
+        currentUnit = null
+        loading = false
     }
 
-    // ===================== Show chờ buffer ======================
+    // ===================== Show chờ ad load ======================
 
     private fun waitForAd(activity: Activity) {
-        log("chờ buffer... ${tag()}")
+        log("chờ ad... ${tag()}")
         markPopup()
         pendingActivity = activity
         pendingDialog = DialogHelper.showLoading(activity, loadingText)
@@ -202,7 +195,7 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
         pendingDone = done
         val timeout = Runnable {
             if (done.compareAndSet(false, true)) {
-                log("timeout chờ buffer ${tag()}")
+                log("timeout chờ ad ${tag()}")
                 cleanupPending()
                 fail(AdmErrorType.AD_IS_NOT_AVAILABLE)
             }
@@ -211,16 +204,14 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
         mainHandler.postDelayed(timeout, loadTimeoutMs)
     }
 
-    /** Buffer vừa có ad -> nếu đang chờ show thì show (đã ở ngoài PreloadCallback). */
     private fun showPendingIfAny() {
         val act = pendingActivity ?: return
-        val id = preloadUnitId ?: return
+        if (loadedAd == null) return
         val done = pendingDone ?: return
-        if (!RewardedAdPreloader.isAdAvailable(id)) return
         if (!done.compareAndSet(false, true)) return
         cleanupPending()
         if (act.isDead()) { fail(AdmErrorType.ACTIVITY_IS_NOT_AVAILABLE); return }
-        pollAndShow(act, id)
+        pollAndShow(act)
     }
 
     private fun failPending(type: AdmErrorType) {
@@ -230,7 +221,6 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
         fail(type)
     }
 
-    /** Dismiss dialog + bỏ timeout + xóa con trỏ pending (KHÔNG đụng done). */
     private fun cleanupPending() {
         pendingTimeout?.let { mainHandler.removeCallbacks(it) }
         safeDismiss(pendingDialog)
@@ -240,7 +230,6 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
         pendingDone = null
     }
 
-    /** Hủy hẳn show đang chờ (đánh dấu done để callback không bắn nữa). */
     private fun clearPending() {
         pendingDone?.set(true)
         cleanupPending()
@@ -248,11 +237,10 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
 
     // ========================== Show ============================
 
-    private fun pollAndShow(activity: Activity, id: String) {
-        val ad = RewardedAdPreloader.pollAd(id)
-        if (ad == null) { log("pollAd null ${tag()}"); fail(AdmErrorType.AD_IS_NOT_AVAILABLE); return }
+    private fun pollAndShow(activity: Activity) {
+        val ad = loadedAd ?: run { log("ad null ${tag()}"); fail(AdmErrorType.AD_IS_NOT_AVAILABLE); return }
         log("show ${tag()}")
-        ad.adEventCallback = this
+        loadedAd = null   // consume -> KHÔNG refill (one-shot)
         ad.show(activity) { rewardItem ->
             log("reward ${tag()}: ${rewardItem.amount} ${rewardItem.type}")
             onReward(rewardItem)
@@ -262,19 +250,15 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
     // ================== RewardedAdEventCallback ==================
 
     override fun onAdShowedFullScreenContent() { log("showed ${tag()}"); onShowed() }
-    override fun onAdImpression() { log("impression ${tag()}"); onImpression() }
-    override fun onAdClicked() { log("clicked ${tag()}"); onClicked() }
-    override fun onAdPaid(value: AdValue) {
-        log("paid ${tag()}: ${value.valueMicros} ${value.currencyCode}")
-        onPaid(value)
-    }
+    override fun onAdImpression() { onImpression() }
+    override fun onAdClicked() { onClicked() }
+    override fun onAdPaid(value: AdValue) { onPaid(value) }
 
     override fun onAdDismissedFullScreenContent() {
         log("dismissed ${tag()}")
         releasePopup()
         onDismissed()
         onComplete()
-        // Buffer tự nạp tiếp -> không cần load tay.
     }
 
     override fun onAdFailedToShowFullScreenContent(fullScreenContentError: FullScreenContentError) {
@@ -301,17 +285,17 @@ class AdmRewardAd internal constructor() : RewardedAdEventCallback {
         }
     }
 
-    /** Check điều kiện trước khi preload (premium/ump/network/đủ id). */
-    /** Premium -> DỌN buffer preloader đang giữ + báo [onError], trả true (caller return). */
+    /** Premium -> bỏ ad đang giữ + báo [onError], trả true (caller return). */
     private fun bailIfPremium(): Boolean {
         val err = premiumBlock() ?: return false
-        preloadUnitId?.let { RewardedAdPreloader.destroy(it) }
-        preloadUnitId = null
+        loadedAd?.destroy()
+        loadedAd = null
+        currentUnit = null
         fail(err)
         return true
     }
 
-    private fun preloadError(): AdmErrorType? {
+    private fun loadError(): AdmErrorType? {
         premiumBlock()?.let { return it }
         if (!AdCore.isMobileAdsReady) return AdmErrorType.UMP_IS_NOT_ACTIVE
         val ctx = AdCore.appContext

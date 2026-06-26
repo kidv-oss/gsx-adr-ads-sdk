@@ -30,7 +30,6 @@ fun RewardInterstitialScreen() {
 
     val ad = AdmRewardInterstitial {
         onAvailable = { status = "Ad sẵn sàng ✅" }
-        onExhausted = { status = "Hết ad (exhausted)" }
         onShowed = { status = "Đang show" }
         onClicked = { status = "User bấm ad" }
         onReward = { item -> status = "Nhận thưởng: ${item.amount} ${item.type}" }

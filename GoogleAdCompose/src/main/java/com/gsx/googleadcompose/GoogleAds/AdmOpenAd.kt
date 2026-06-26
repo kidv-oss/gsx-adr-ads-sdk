@@ -163,7 +163,7 @@ class AdmOpenAd internal constructor() : AppOpenAdEventCallback {
         if (!force && !GlobalVariables.canShowOpenAd) { log("canShowOpenAd=false -> không load"); return }
         if (bailIfPremium()) return                 // premium -> dọn buffer + return
         preloadError()?.let { fail(it); return }    // còn lại: UMP/network/empty
-        if (preloadUnitId != null) { log("đang preload ${tag()}, bỏ qua"); return }
+        if (preloadUnitId != null) return                          // đang preload -> bỏ qua
 
         // customIds != null -> xoay vòng list đó thay cho AdmConfigAdId.listOpenAdUnitID.
         val u = customIds?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() } ?: units()
@@ -181,7 +181,7 @@ class AdmOpenAd internal constructor() : AppOpenAdEventCallback {
                 mainHandler.post { if (wantShow) { wantShow = false; show(wantIndex, customIds = wantCustomIds) } }
             }
             override fun onAdsExhausted(preloadId: String) {
-                log("exhausted ${tag()}"); onExhausted()
+                onExhausted()
             }
             override fun onAdFailedToPreload(preloadId: String, adError: LoadAdError) {
                 log("preload FAIL ${tag()}: ${adError.code} ${adError.message}")
@@ -246,12 +246,9 @@ class AdmOpenAd internal constructor() : AppOpenAdEventCallback {
         splashTimeout = null
         onShowed()
     }
-    override fun onAdImpression() { log("impression ${tag()}"); onImpression() }
-    override fun onAdClicked() { log("clicked ${tag()}"); onClicked() }
-    override fun onAdPaid(value: AdValue) {
-        log("paid ${tag()}: ${value.valueMicros} ${value.currencyCode}")
-        onPaid(value)
-    }
+    override fun onAdImpression() { onImpression() }
+    override fun onAdClicked() { onClicked() }
+    override fun onAdPaid(value: AdValue) { onPaid(value) }
 
     override fun onAdDismissedFullScreenContent() {
         log("dismissed ${tag()}")

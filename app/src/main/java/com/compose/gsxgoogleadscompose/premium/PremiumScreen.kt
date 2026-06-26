@@ -81,12 +81,45 @@ fun PremiumScreen(
     var plans by remember { mutableStateOf(buildPlans()) }
     var selectedId by remember { mutableStateOf(MyProducts.all.first()) }
 
+    fun toast(msg: String) =
+        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+
     BillingEvents(
-        onProductsFetched = { plans = buildPlans() },
-        onPurchased = { onClose() },
+        // Billing đã connect + fetch xong product -> dựng lại giá.
+        onBillingReady = {
+            android.util.Log.d("Premium", "billing ready")
+            plans = buildPlans()
+        },
+        // Product details về từ Play -> refresh giá/trial/discount.
+        onProductsFetched = {
+            android.util.Log.d("Premium", "products fetched: ${it.size}")
+            plans = buildPlans()
+        },
+        // Mua thành công (đã PURCHASED) -> đóng màn.
+        onPurchased = { ids ->
+            toast("Purchased: ${ids.joinToString()}")
+            onClose()
+        },
+        // Đang chờ thanh toán (vd tiền mặt) -> KHÔNG cấp quyền, chỉ nhắc.
+        onPending = { ids ->
+            toast("Purchase pending: ${ids.joinToString()}")
+        },
+        // Sub / non-consumable đã acknowledge.
+        onAcknowledged = { id ->
+            android.util.Log.d("Premium", "acknowledged: $id")
+        },
+        // Consumable đã consume -> cấp item ngay.
+        onConsumed = { id, qty ->
+            android.util.Log.d("Premium", "consumed: $id x$qty")
+        },
+        // Mọi lỗi billing (result = null nếu lỗi nội bộ).
+        onError = { type, result ->
+            android.util.Log.w("Premium", "billing error: $type, ${result?.debugMessage}")
+            toast("Billing error: $type")
+        },
+        // Restore thủ công (nút) hoàn tất.
         onRestoreFinished = { has ->
-            val msg = if (has) "Purchase restored" else "No purchases to restore"
-            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+            toast(if (has) "Purchase restored" else "No purchases to restore")
         },
     )
 
