@@ -45,7 +45,7 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    implementation("com.github.kidv-oss:gsx-adr-ads-sdk:0.0.3")
+    implementation("com.github.kidv-oss:gsx-adr-ads-sdk:0.0.4")
 }
 ```
 
